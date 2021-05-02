@@ -1,7 +1,7 @@
 import logging
 import time
 import random
-import requests 
+import requests
 import os
 import atexit
 
@@ -12,13 +12,8 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+from twilio.rest import Client
 
-TIMEZONE = 'US/Eastern'
-SMPT_SERVER = "smtp.gmail.com"
-SMPT_PORT = 587
 URL = "https://www.amd.com/en/direct-buy/ca"
 SELECTOR = "#block-amd-content > div > div > div > div > div"
 NAME_SELECTOR = "div.shop-content > div.direct-buy > div.shop-title"
@@ -31,46 +26,26 @@ logging.basicConfig(filename='tracker.log', filemode='w', format='%(asctime)s - 
 logging.getLogger().addHandler(logging.StreamHandler())
 
 # Set Paramaters
-sender_email = os.environ.get('S_EMAIL')
-password = os.environ.get('E_PASS') 
-target_email = os.environ.get('T_EMAIL')
+account_sid = os.environ['TWILIO_ACCOUNT_SID']
+auth_token = os.environ['TWILIO_AUTH_TOKEN']
+target_phone = os.environ['TARGET_PHONE']
+sender_phone = os.environ['SENDER_PHONE']
 
-if target_email == None or sender_email == None or password == None:
+if account_sid == None or auth_token == None:
     logging.error("Failed to fetch required environment variables!")
     quit()
 
+client = Client(account_sid, auth_token)
+
 def send_msg(message):
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = target_email
-        msg['Subject'] = "AMD Notify"
-        message = message
-        msg.attach(MIMEText(message))
-
-        server = smtplib.SMTP(SMPT_SERVER, SMPT_PORT)
-
-        # identify ourselves to smtp gmail client
-        server.ehlo()
-        # secure our email with tls encryption
-        server.starttls()
-        # re-identify ourselves as an encrypted connection
-        server.ehlo()
-
-        server.login(sender_email,password)
-        server.sendmail(sender_email, target_email, msg.as_string())
-        server.quit()
-        
-        logging.info("Message sent!")
-    except Exception as err:
-        logging.error("Failed to send message: " + str(err))
+    msg =client.messages.create(body="AMD Check \n" + message, from_=sender_phone, to=target_phone)
+    logging.info("Text message sent - " + str(msg.sid))
 
 def start_chrome_driver():
     logging.info("Starting ChromeDriver.....")
     options = webdriver.ChromeOptions()
     options.add_argument('--no-sandbox')
     options.add_argument('--headless')
-    options.add_argument('start-maximized')
     options.add_argument('disable-infobars')
     options.add_argument('--disable-extensions')
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Safari/537.36 Edg/87.0.664.75")
@@ -81,7 +56,7 @@ def start_chrome_driver():
     wd1.set_page_load_timeout(15)
     logging.info("ChromeDriver Started!")
     return wd1
-    
+
 def exit_handler():
     if wd != 0:
         wd.quit()
@@ -95,9 +70,11 @@ if __name__ == "__main__":
     send_msg("Chrome Driver Started")
 
     product_info = []
+    shift_send = True
+    shift_send_end = False
 
     while True:
-        now_time = datetime.now(timezone(TIMEZONE))
+        now_time = datetime.now(timezone('US/Eastern'))
         message = ""
         trigger_send = False
 
@@ -105,7 +82,7 @@ if __name__ == "__main__":
             send_msg("Script still running!")
             time.sleep(60)
 
-        if now_time.hour >= 8 and now_time.hour <= 18:      
+        if now_time.hour >= 8 and now_time.hour <= 18:
             if shift_send:
                 send_msg("starting day check")
                 shift_send = False
@@ -116,23 +93,21 @@ if __name__ == "__main__":
             except Exception as err:
                 logging.warning(err)
                 continue
-                    
-            # TODO add status code check
-                    
+
             try:
                 elements = wd.find_elements(By.CSS_SELECTOR, SELECTOR)
             except Exception as err:
                 logging.warning(err)
                 continue
-                        
+
             for elem in elements:
                 try:
                     item = elem.find_element(By.CSS_SELECTOR, NAME_SELECTOR)
                     prod_name = item.text.strip()
 
                     if [prod_name, False or True] not in product_info:
-                        product_info.append([prod_name, False]) 
-                    
+                        product_info.append([prod_name, False])
+
                     index = 0
                     for i in range(0, len(product_info)):
                         if product_info[i][0] == prod_name:
@@ -141,7 +116,7 @@ if __name__ == "__main__":
                         if i == len(product_info) - 1:
                             logging.error("Product not found in list, quitting!")
                             quit()
-                    
+
                     try:
                         stock_check = elem.find_element(By.CSS_SELECTOR, BUTTON_SELECTOR)
                         if not product_info[index][1]:
@@ -153,7 +128,7 @@ if __name__ == "__main__":
                     except Exception as err:
                         product_info[index][1] = False
                         logging.info(product_info[index][0] + " Out of Stock!")
-                
+
                 except Exception as err:
                     logging.warning(err)
 
@@ -167,4 +142,4 @@ if __name__ == "__main__":
 
         timeout = random.randint(5, 10)
         logging.info("Sleep for " + str(timeout) + "s")
-        time.sleep(timeout) 
+        time.sleep(timeout)
